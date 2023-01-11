@@ -145,12 +145,15 @@ kind: ClusterRole
 metadata:
   name: agents-operator-role
 rules:
-- apiGroups: [""] 
-  resources: [ "nodes", "configmaps"]
-  verbs: [ "get", "list", "watch"]
+- apiGroups: ["*"] 
+  resources: [ "nodes", "configmaps", "pods", "namespaces", "endpoints"]
+  verbs: [ "get", "list", "watch", "create", "delete", "update"]
 - apiGroups: ["*"] 
   resources: [ "deployments"]
-  verbs: [ "get", "list", "watch", "patch"]
+  verbs: [ "create", "get", "list", "watch", "patch"]
+- apiGroups: ["*"]
+  resources: ["clusterroles", "clusterrolebindings", "serviceaccounts", "secrets", "roles", "services", "rolebindings", "horizontalpodautoscalers"]
+  verbs: ["get", "update", "create", "list", "watch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -159,7 +162,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: agents-operator-role
 subjects:
 - kind: ServiceAccount
   name: agents-operator-sa
