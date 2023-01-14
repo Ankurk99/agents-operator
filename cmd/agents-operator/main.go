@@ -270,9 +270,8 @@ func installAgents(clientset *kubernetes.Clientset, cfg *action.Configuration, s
 	clusterName := getEnv("cluster_name", "default")
 	workspaceID := getEnv("workspace_id", "0")
 
-	env := fmt.Sprint("tenant_id=", tenantID, " workspace_id=", workspaceID, " cluster_name=", clusterName, " cluster_id=", clusterID)
+	env := fmt.Sprint("serviceAccount.Namespace=", globalns, ",env.tenant_id=", tenantID, ",env.workspace_id=", workspaceID, ",env.cluster_name=", clusterName, ",env.cluster_id=", clusterID)
 	var args = map[string]string{
-		"set":    "serviceAccount.Namespace=" + globalns,
 		"setenv": env,
 	}
 
@@ -302,18 +301,12 @@ func installAgents(clientset *kubernetes.Clientset, cfg *action.Configuration, s
 		log.Error().Msgf("Error in Mergevalues: %v", err.Error())
 		return
 	}
-	if name == "discovery-engine" {
-		if err := strvals.ParseInto(args["set"], vals); err != nil {
-			log.Error().Msgf("failed parsing --set data: %v", err.Error())
-			return
-		}
-	}
 
 	if err := strvals.ParseInto(args["setenv"], vals); err != nil {
 		log.Error().Msgf("failed parsing --set env data: %v", err.Error())
 		return
 	}
-	log.Info().Msgf("Env variables passed to helm: %s", vals)
+	log.Info().Msgf("Env variables passed to helm: %v", vals)
 
 	_, err = client.Run(chart, vals)
 	if err != nil {
