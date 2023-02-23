@@ -120,8 +120,8 @@ spec:
             value: "https://USERNAME:PASSWORD@agents.accuknox.com/repository/accuknox-agents-dev"
         resources:
           requests:
-            cpu: 100m
-            memory: 100Mi
+            cpu: 50m
+            memory: 50Mi
           limits:
             cpu: 500m
             memory: 500Mi

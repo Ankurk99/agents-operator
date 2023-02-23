@@ -23,6 +23,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -226,32 +227,28 @@ func updateAgentResource(clientset *kubernetes.Clientset, configMap *v1.ConfigMa
 	return err
 }
 
-// watch "agents-operator-config" configMap for changes
-func watchConfigMap(clientset *kubernetes.Clientset, nodesCount int) {
-	// Create a new context
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	configMapName := "metadata.name=" + agentConfig
-	// Watch for changes to the configmap
-	watcher, err := clientset.CoreV1().ConfigMaps(globalns).Watch(ctx, metav1.ListOptions{FieldSelector: configMapName})
-	if err != nil {
-		log.Error().Msg(err.Error())
-		return
-	}
-	defer watcher.Stop()
-
-	// Loop indefinitely
+// wait for the deployment to be ready
+func deploymentReady(clientset *kubernetes.Clientset, globalns string, factory informers.SharedInformerFactory) {
+	deploymentLister := factory.Apps().V1().Deployments().Lister()
+	// Loop until all deployments are ready
 	for {
-		select {
-		case <-watcher.ResultChan():
-			configMapUpdated = true
-			updateAllAgents(clientset, nodesCount)
-
-		case <-time.After(time.Minute):
-			log.Info().Msgf("Watching the agents-operator configMap changes")
+		deployments, err := deploymentLister.List(labels.Everything())
+		if err != nil {
+			log.Error().Msgf("Deployment not found: %v", err)
+			return
 		}
-		time.Sleep(200 * time.Millisecond)
+
+		allReady := true
+		for _, deployment := range deployments {
+			if deployment.Status.ReadyReplicas != *deployment.Spec.Replicas {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			break
+		}
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -371,9 +368,9 @@ func main() {
 	stopCh := make(chan struct{})
 
 	// Create shared informer factory
-	factory := informers.NewSharedInformerFactory(clientset, time.Second*5)
+	factory := informers.NewSharedInformerFactory(clientset, 0)
 
-	dfactory := informers.NewSharedInformerFactoryWithOptions(clientset, time.Second*30, informers.WithNamespace(globalns))
+	dfactory := informers.NewSharedInformerFactoryWithOptions(clientset, 0, informers.WithNamespace(globalns))
 
 	// Retrieve the node informer
 	nodeInformer := factory.Core().V1().Nodes().Informer()
@@ -406,6 +403,7 @@ func main() {
 			deployment, ok := obj.(*appsv1.Deployment)
 			if ok {
 				log.Info().Msgf("New deployment detected: %s", deployment.Name)
+				deploymentReady(clientset, globalns, dfactory)
 				updateAllAgents(clientset, nodesCount)
 			}
 		},
@@ -422,6 +420,7 @@ func main() {
 			// Check if the deployment has been updated and if it is now ready
 			if oldDeployment.ResourceVersion != newDeployment.ResourceVersion && newDeployment.Status.ReadyReplicas == *newDeployment.Spec.Replicas {
 				log.Info().Msgf("Deployment updated: %s", newDeployment.Name)
+				deploymentReady(clientset, globalns, dfactory)
 				updateAllAgents(clientset, nodesCount)
 			}
 		},
@@ -434,13 +433,37 @@ func main() {
 		},
 	})
 
-	// Watcher to look for ConfigMap changes
-	go watchConfigMap(clientset, nodesCount)
+	// Retrieve the deployment informer
+	configMapInformer := factory.Core().V1().ConfigMaps().Informer()
 
-	// Run the informer with the stop channel
+	// Configmap informer
+	_, _ = configMapInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			log.Info().Msgf("Configmap retrieved!")
+			oldConfigMap, ok := oldObj.(*v1.ConfigMap)
+			if !ok {
+				return
+			}
+			newConfigMap, ok := newObj.(*v1.ConfigMap)
+			if !ok {
+				return
+			}
+			if oldConfigMap.ResourceVersion != newConfigMap.ResourceVersion {
+				log.Info().Msgf("Configmap updated: %s", newConfigMap.Name)
+				mutex.Lock()
+				configMapUpdated = true
+				mutex.Unlock()
+				updateAllAgents(clientset, nodesCount)
+			}
+		},
+	})
+
+	// Run the node informer with the stop channel
 	go nodeInformer.Run(stopCh)
-	// Run the informer with the stop channel
+	// Run the deployment informer with the stop channel
 	go deploymentInformer.Run(stopCh)
+	// Run the configmap informer with the stop channel
+	go configMapInformer.Run(stopCh)
 
 	wait.Until(func() {}, time.Second, stopCh)
 	// Close the stop channel to signal the informers to stop
