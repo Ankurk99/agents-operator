@@ -439,7 +439,6 @@ func main() {
 	// Configmap informer
 	_, _ = configMapInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		UpdateFunc: func(oldObj, newObj interface{}) {
-			log.Info().Msgf("Configmap retrieved!")
 			oldConfigMap, ok := oldObj.(*v1.ConfigMap)
 			if !ok {
 				return
@@ -449,11 +448,13 @@ func main() {
 				return
 			}
 			if oldConfigMap.ResourceVersion != newConfigMap.ResourceVersion {
-				log.Info().Msgf("Configmap updated: %s", newConfigMap.Name)
-				mutex.Lock()
-				configMapUpdated = true
-				mutex.Unlock()
-				updateAllAgents(clientset, nodesCount)
+				if newConfigMap.Name == agentConfig {
+					log.Info().Msgf("Configmap updated: %s", newConfigMap.Name)
+					mutex.Lock()
+					configMapUpdated = true
+					mutex.Unlock()
+					updateAllAgents(clientset, nodesCount)
+				}
 			}
 		},
 	})
